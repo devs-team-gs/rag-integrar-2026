@@ -1,0 +1,25 @@
+services:
+  postgres:
+    # OJO: no es la imagen `postgres` de siempre. Esta trae pgvector ya compilado.
+    # Con `postgres:alpine`, el CREATE EXTENSION del schema.sql falla.
+    image: pgvector/pgvector:pg17
+    container_name: rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      # 5433 en el host para poder tener este Postgres y el de la API de auth
+      # levantados al mismo tiempo sin que se peleen por el puerto.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - rag_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  rag_data:
