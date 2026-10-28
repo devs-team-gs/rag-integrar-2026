@@ -1,98 +1,283 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Preguntale a tus apuntes
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Un RAG sobre los apuntes de la materia, montado sobre Nest. Le preguntás
+*"¿cómo cierro sesión en la API?"* y te contesta con el contenido real de las
+clases, citando de qué archivo lo sacó.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Sin LangChain, sin LlamaIndex, sin ORM. El objetivo es **ver la maquinaria**.
 
-## Description
+## Requisitos
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+1. **Docker** corriendo.
+2. **Node LTS + pnpm**.
+3. Una **API key de Gemini**, gratis y sin tarjeta:
+   - Entrá a [Google AI Studio](https://aistudio.google.com/) con tu cuenta de Google.
+   - **Get API key** → **Create API key**. Copiala.
+   - El free tier son 1.500 requests por día.
+4. **TablePlus** (o Adminer) para mirar la base con los ojos.
 
-## Project setup
+> ⚠️ **Cada uno necesita su propia key.** Indexar 8 apuntes son 176 requests. Si
+> comparten una sola key entre todo el curso, la cuota se agota enseguida.
 
-```bash
-$ pnpm install
-```
+> 🛑 **El free tier tiene DOS límites, y el que muerde no es el que parece.**
+> Además del tope diario (1.500 requests), hay **100 requests por minuto y por
+> modelo**. Por eso la ingesta pausa 700ms entre llamadas: 60000/100 = 600ms es el
+> mínimo. Con una pausa de 100ms —que parece razonable— vas a 600 por minuto y
+> Gemini te corta con un `429` alrededor del chunk 100.
 
-## Compile and run the project
+## Puesta en marcha
+
+### 1. Variables de entorno
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+cp env.example .env
 ```
 
-## Run tests
+Abrí `.env` y pegá tu key en `GEMINI_API_KEY=`. Lo demás ya viene listo.
+
+Si falta alguna variable, la app **no arranca** y te dice cuál. Es a propósito:
+mejor que reviente al inicio y no en medio de una demo.
+
+### 2. La base de datos
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+docker compose up -d
 ```
 
-## Deployment
+Es Postgres de siempre, con dos diferencias a propósito:
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- La imagen es **`pgvector/pgvector:pg17`**, no `postgres:alpine`. Es Postgres
+  normal con la extensión ya compilada adentro. Con la imagen común,
+  `CREATE EXTENSION vector` tira `extension "vector" is not available`.
+- El puerto en el host es **5433**, no 5432, para poder tener este Postgres y el
+  de la API de auth levantados al mismo tiempo.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 3. El schema
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+docker exec -i rag-postgres psql -U rag -d rag < schema.sql
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**Para TablePlus**: host `localhost`, puerto `5433`, user `rag`, password
+`rag_dev`, base `rag`.
 
-## Resources
+> 💡 Andá a TablePlus y mirá la tabla vacía. Fijate el tipo de la columna
+> `embedding`. Es un tipo de dato de Postgres como cualquier otro — no hay una
+> "base vectorial" separada en ningún lado.
 
-Check out a few resources that may come in handy when working with NestJS:
+### 4. Indexar
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+pnpm ingest
+```
 
-## Support
+Lee todos los `.md` de `corpus/`, los corta en chunks, los embebe y los guarda.
+Con los 8 apuntes actuales salen 176 chunks y tarda unos 3 minutos — el tiempo se
+lo lleva casi todo la pausa entre requests, no el trabajo.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+> 🛑 **Este es el paso que se olvida.** Cada vez que edites un apunte, volvé a
+> correr esto. Si no, el RAG sigue viendo la versión vieja y no vas a entender
+> por qué. No es un bug: es que la fase de indexación no corrió.
 
-## Stay in touch
+### 5. Levantar la API
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```bash
+pnpm start:dev
+```
 
-## License
+## Cómo se usa
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```bash
+curl -X POST localhost:3000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"pregunta":"¿cómo cierro sesión en la API?"}'
+```
+
+Devuelve la respuesta **y** los chunks que la generaron:
+
+```json
+{
+  "respuesta": "Se llama a POST /auth/logout, que pone hashedRefreshToken en null...",
+  "chunks": [
+    { "fuente": "clase31_auth.md", "seccion": "Logout", "similitud": 0.812 }
+  ]
+}
+```
+
+> 🔑 **Los chunks no son un extra.** Son tu única ventana al 50% del sistema. La
+> primera pregunta ante cualquier respuesta mala siempre es *"¿qué le pasaste al
+> modelo?"* — no *"¿por qué el modelo dice eso?"*.
+
+## Cómo saber si funciona
+
+No alcanza con "probá a ver". Cuatro pruebas concretas.
+
+### Prueba 1 — Responde bien y cita bien
+
+```bash
+curl -X POST localhost:3000/ask -H 'Content-Type: application/json' \
+  -d '{"pregunta":"¿cómo cierro sesión en la API?"}'
+```
+
+Tiene que citar la clase correcta.
+
+> 🔑 Fijate el detalle que hace toda la clase: **tu pregunta no comparte ni una
+> palabra con el texto del apunte** (ahí dice "logout", "hashedRefreshToken",
+> "204" — nunca "cerrar sesión"). Un `ILIKE '%cerrar sesión%'` habría devuelto
+> cero filas. Eso es la búsqueda semántica funcionando.
+
+### Prueba 2 — Fuera del corpus: tiene que decir que no sabe
+
+```bash
+curl -X POST localhost:3000/ask -H 'Content-Type: application/json' \
+  -d '{"pregunta":"¿cuál es la capital de Mongolia?"}'
+```
+
+Tiene que responder exactamente *"No encontré eso en los apuntes."*
+
+> 🛑 Si te contesta "Ulán Bator", **tu RAG está roto** aunque la respuesta sea
+> correcta. Significa que el modelo está usando su conocimiento de entrenamiento
+> en vez del contexto — y si lo hace con geografía, lo va a hacer con una
+> pregunta técnica donde no lo vas a poder detectar.
+>
+> El arreglo está en el prompt, no en el retriever.
+
+### Prueba 3 — Mirá los vectores con tus ojos
+
+En TablePlus:
+
+```sql
+-- ¿Cuántos chunks hay y de dónde salieron?
+SELECT fuente, COUNT(*) FROM chunks GROUP BY fuente ORDER BY 2 DESC;
+
+-- Mirá un vector de verdad
+SELECT contenido, LEFT(embedding::text, 80) AS primeros_valores
+FROM chunks LIMIT 1;
+
+-- Similitud a mano: agarrá el chunk #1 y buscá sus vecinos.
+-- Es exactamente lo que hace el RAG, pero sin ninguna capa de IA en el medio.
+SELECT fuente,
+       seccion,
+       1 - (embedding <=> (SELECT embedding FROM chunks WHERE id = 1)) AS similitud
+FROM chunks
+WHERE id <> 1
+ORDER BY 3 DESC
+LIMIT 5;
+```
+
+> 💡 La última query es la que hace caer la ficha: **la "búsqueda semántica" es
+> un `ORDER BY`.** No hay ningún modelo corriendo ahí. Los vectores ya estaban
+> calculados, y comparar vectores es aritmética.
+
+### Prueba 4 — El índice
+
+```sql
+EXPLAIN ANALYZE
+SELECT contenido FROM chunks
+ORDER BY embedding <=> (SELECT embedding FROM chunks WHERE id = 1)
+LIMIT 5;
+```
+
+**Con 176 chunks te va a decir `Seq Scan`, y eso NO significa que el índice esté
+roto.** Postgres calcula el costo de las dos opciones y con una tabla así de chica
+leerla entera le sale más barato que bajar por el índice (costo ~40 contra ~365).
+El optimizador está haciendo lo correcto.
+
+Para comprobar que el índice **puede** usarse, forzalo:
+
+```sql
+SET enable_seqscan = off;
+EXPLAIN SELECT contenido FROM chunks
+ORDER BY embedding <=> (SELECT embedding FROM chunks WHERE id = 1) LIMIT 5;
+SET enable_seqscan = on;
+```
+
+Ahí sí tiene que aparecer `Index Scan using chunks_embedding_idx`.
+
+> 🔑 Esta es la distinción que vale la clase: **que un índice exista no significa que
+> se use, y que no se use no significa que esté mal.** Quien decide es el planificador,
+> según el costo. Un RAG con millones de chunks elegiría el índice solo.
+
+Y ahora sí, el error silencioso de verdad. Creá el índice con el operador equivocado:
+
+```sql
+DROP INDEX chunks_embedding_idx;
+CREATE INDEX chunks_embedding_idx ON chunks USING hnsw (embedding vector_l2_ops);
+
+SET enable_seqscan = off;   -- forzamos: aun así no lo va a poder usar
+EXPLAIN SELECT contenido FROM chunks
+ORDER BY embedding <=> (SELECT embedding FROM chunks WHERE id = 1) LIMIT 5;
+```
+
+Sigue en `Seq Scan` **aunque lo fuerces**, y sin un solo error ni warning. Ese es el
+caso grave: el índice es inservible para esta query porque `vector_l2_ops` no le sirve
+al operador `<=>`.
+
+Fijate el costo que muestra: `10000000000.00`. Esa cifra absurda es la penalización
+que Postgres se auto-aplica cuando le desactivaste el `Seq Scan` pero igual no tiene
+otra opción. Es la confesión de que no le quedaba alternativa.
+
+Restauralo:
+
+```sql
+DROP INDEX chunks_embedding_idx;
+CREATE INDEX chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops);
+SET enable_seqscan = on;
+```
+
+## Estructura
+
+```
+src/
+├── ingest.ts                    entrypoint CLI (Nest sin servidor HTTP)
+└── rag/
+    ├── modelos.ts               constantes de Gemini y dimensiones
+    ├── chunking.ts              función pura: markdown → chunks
+    ├── embeddings.service.ts    el POST a Gemini
+    ├── database.provider.ts     el Pool de pg
+    ├── rag.service.ts           buscar() + responder()
+    ├── ingest.service.ts        corpus → chunks → embeddings → insert
+    ├── rag.controller.ts        POST /ask
+    └── dto/ask.dto.ts
+```
+
+## Para el docente
+
+Indexar en vivo son ~500 requests y un minuto largo por alumno. Si preferís no
+quemar clase en eso, indexá una vez y repartí el dump:
+
+```bash
+# generar
+docker exec rag-postgres pg_dump -U rag -d rag > dump.sql
+
+# restaurar (del lado del alumno, con el contenedor levantado)
+docker exec -i rag-postgres psql -U rag -d rag < dump.sql
+```
+
+Así arrancan directo en la Prueba 1 y la ingesta queda como tarea.
+
+## Si algo falla
+
+| Síntoma | Causa |
+| ------- | ----- |
+| `extension "vector" is not available` | La imagen de Docker no es `pgvector/pgvector` |
+| `column cannot have more than 2000 dimensions` | `DIMENSIONES` en `src/rag/modelos.ts` pasa de 2000 |
+| `Gemini respondió 404` | Se renombró el modelo. Mirá la [lista](https://ai.google.dev/gemini-api/docs/models) y cambiá `src/rag/modelos.ts` |
+| `Gemini respondió 429` | Rate limit. Casi siempre es el de **100 por minuto**, no el diario. El código reintenta solo; si insiste, subí `PAUSA_MS` |
+| `Gemini respondió 503` | El modelo está sobrecargado del lado de Google. El código reintenta solo; si insiste, probá otro modelo en `src/rag/modelos.ts` |
+| `Cannot read properties of undefined` al embeber | Cambió la forma de la respuesta. `:embedContent` devuelve `embedding` singular; `embeddings` plural es de `:batchEmbedContents` |
+| `EXPLAIN` dice `Seq Scan` | Con pocas filas es lo correcto, no un error. Ver Prueba 4 |
+| `Faltan variables de entorno` | Falta `cp env.example .env` y pegar la key |
+| Responde siempre "no encontré eso" | La tabla está vacía: falta `pnpm ingest` |
+| Todo anda pero lento | El índice no se está usando. Prueba 4 |
+
+## Extensiones
+
+1. **Citas numeradas** — que la respuesta diga `[1]`, `[2]`. Es sólo el prompt.
+2. **Filtrar por clase** — `WHERE fuente LIKE 'clase3%'` antes del `ORDER BY`.
+3. **Hybrid search** — una columna `tsvector` en la misma tabla, las dos
+   búsquedas, y fusionás los rankings. Es la mejora con mejor relación
+   esfuerzo/beneficio: cubre el punto ciego de los embeddings, que son malos con
+   nombres propios y códigos exactos.
+4. **Indexación incremental** — hash por archivo, reindexás sólo lo que cambió.
+5. **Una UI en Next** — un input, un botón, y las citas linkeadas.
